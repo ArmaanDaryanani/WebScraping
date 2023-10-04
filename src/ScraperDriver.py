@@ -1,4 +1,4 @@
-from GetData import GetData
+from src.GetData import GetData
 
 class ScraperDriver:
     def __init__(self):
