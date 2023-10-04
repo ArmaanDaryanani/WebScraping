@@ -1,4 +1,5 @@
 import requests
+import pyshorteners
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,12 +8,23 @@ class GetData:
         self.session = requests.Session()
 
     #Returns main URL from the desired searchTerm (ex: 'ps3 video games')
-    def getEbayUrl(self, searchTerm, pageNumber):
-        return f'https://www.ebay.com/sch/i.html?_from=R40&_trksid=p2510209.m570.l1313&_nkw={searchTerm}&_sacat=0&_ipg=240&_pgn={pageNumber}'
+    def getEbayUrl(self, searchTerm, pageNumber, ifSold=False, ifCompleted=False, ifLowToHigh=False, ifHighToLow=False):
+        soldNum = 0  # 0 for unsold
+        completedNum = 0  # 0 for not completed
+        ascendVal = 0
+        if ifLowToHigh:
+            ascendVal = 15
+        elif ifHighToLow:
+            ascendVal = 16
+        if ifSold:
+            soldNum = 1
+        if ifCompleted:
+            completedNum = 1
+        return f'https://www.ebay.com/sch/i.html?_from=R40&_nkw={searchTerm}&_sacat=0&_ipg=240&rt=nc&LH_Sold={soldNum}&LH_Complete={completedNum}&_pgn={pageNumber}&_sop={ascendVal}'
 
     #From searchTerm, returns every link to a product on a single page
-    def getPageListingUrls(self, searchTerm, pageNumber):
-        url = self.getEbayUrl(searchTerm, pageNumber)
+    def getPageListingUrls(self, searchTerm, pageNumber, ifSold=False, ifCompleted=False, ifLowToHigh=False, ifHighToLow=False):
+        url = self.getEbayUrl(searchTerm, pageNumber, ifSold, ifCompleted, ifLowToHigh, ifHighToLow)
 
         page = requests.get(url)
         soup = BeautifulSoup(page.content, 'html.parser')
@@ -51,7 +63,8 @@ class GetData:
                         .find('span', class_='ux-textspans')
 
                     if name_element:
-                        # If found, print in terminal and append to return array (optional printout)
+                        if name_element.text == "Does not apply":
+                            return self.nameFromTitle(link)
                         return name_element.text
 
                     else:
@@ -64,35 +77,74 @@ class GetData:
     #returns item prices given the html content
     def getItemPrice(self, content):
         soup = BeautifulSoup(content, 'html.parser')
-        itermediary_text = soup.find('div', class_="x-price-primary")
-        price = itermediary_text.find('span', class_="ux-textspans").text
+        intermediary_text = soup.find('div', class_="x-price-primary")
+        price = intermediary_text.find('span', class_="ux-textspans").text
+        if "US" not in price:
+            pass
         return price[3:]
 
-    def getAverageSoldPrice(self, ):
-
-
-    def getAverageSellingPrice(self, ):
+    #returns shipping cost for a given item
+    def getItemShipping(self, content):
+        soup = BeautifulSoup(content, 'html.parser')
+        intermediary_text = soup.find('div', class_="vim d-shipping-minview")
+        try:
+            shipping_price = intermediary_text.find('span', class_="ux-textspans ux-textspans--BOLD").text
+            if "Free" in shipping_price:
+                return "Free"
+            if "," in shipping_price:
+                return "Free"
+            if "US" not in shipping_price:
+                pass
+            return shipping_price[3:]
+        except AttributeError:
+            return "No Shipping Price Found"
 
 
     #Returns all attributes of the given listing
-    def getAllAttributes(self, searchTerm, categoryName, enableLots, pageNumber):
-        links = self.getPageListingUrls(searchTerm, pageNumber)
+    def getAllAttributes(self, searchTerm, categoryName, enableLots, pageNumber, number_of_listings=0, ifSold=False, ifCompleted=False, ifLowToHigh=False, ifHighToLow=False):
+        links = self.getPageListingUrls(searchTerm, pageNumber, ifSold, ifCompleted, ifLowToHigh, ifHighToLow)
 
-        # Fetch pages concurrently
+        all_attr = []
+
+        # Fetch pages concurrently with threads
         with ThreadPoolExecutor() as executor:
             pages = list(executor.map(self.fetchPage, links))
 
-        for link, content in zip(links, pages):
-            name = self.getItemNames(content, categoryName, enableLots, link)
-            price = self.getItemPrice(content)
-            url = link
+        if number_of_listings == 0:
+            for link, content in zip(links, pages):
+                name = self.getItemNames(content, categoryName, enableLots, link)
+                price = self.getItemPrice(content)
+                shipping = self.getItemShipping(content)
+                url = link
 
-            #if lots are found (since name returns empty string if so)
-            if len(name) == 0:
-                continue
+                # if lots are found (since name returns empty string if so)
+                if len(name) == 0:
+                    continue
 
-            print(name, price)
+                all_attr.append(name)
+                all_attr.append(price)
+                all_attr.append(shipping)
+                all_attr.append(self.shortenUrl(url))
+                all_attr.append("ffx0")
 
+        else:
+            for link, content in zip(links, pages):
+                for i in range(number_of_listings):
+                    name = self.getItemNames(content, categoryName, enableLots, link)
+                    price = self.getItemPrice(content)
+                    shipping = self.getItemShipping(content)
+                    url = link
+
+                    # if lots are found (since name returns empty string if so)
+                    if len(name) == 0:
+                        continue
+
+                    all_attr.append(name)
+                    all_attr.append(price)
+                    all_attr.append(shipping)
+                    all_attr.append(self.shortenUrl(url))
+                    all_attr.append("ffx0")
+        return all_attr
 
     #When unable to fetch item name from category description, return url
     def nameFromTitle(self, listing_url):
@@ -100,8 +152,10 @@ class GetData:
         game_title = soup.find('span', class_="ux-textspans ux-textspans--BOLD").text
         return game_title
 
-
-
+    #shortens urls
+    def shortenUrl(self, url):
+        s = pyshorteners.Shortener()
+        return s.tinyurl.short(url)
 
 
 
